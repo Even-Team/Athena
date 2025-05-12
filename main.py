@@ -12,13 +12,11 @@ from urllib.parse import urljoin
 
 filterwarnings("ignore", category=UserWarning, module='wikipedia')
 
-
 bot = telebot.TeleBot('7967328415:AAHOjXfv8Oa8ChCTRTuJJ-gBUASpV5EfZHA')
 
 current_language = 'en'
-
+sound_mode = {}  # Словарь для отслеживания пользователей в режиме sound
 search_results = {}
-
 
 language_texts = {
     'en': {
@@ -37,7 +35,10 @@ language_texts = {
         'runic_error': "An error occurred while generating runic text.",
         'no_image': "No image available for this article.",
         'listen_button': "Listen to full text",
-        'runes_button': "Show in runes"
+        'runes_button': "Show in runes",
+        'sound_mode_enter': "Sound mode activated. Send me any text and I'll convert it to speech. Type /exit to quit.",
+        'sound_mode_exit': "Exited sound mode.",
+        'sound_mode_error': "Error generating speech. Please try again."
     },
     'ru': {
         'welcome': "Добро пожаловать в Wikipedia Bot! Введите любое слово или тему для поиска в Википедии.",
@@ -55,7 +56,10 @@ language_texts = {
         'runic_error': "Произошла ошибка при генерации рунического текста.",
         'no_image': "Для этой статьи нет изображения.",
         'listen_button': "Прослушать текст",
-        'runes_button': "Показать рунами"
+        'runes_button': "Показать рунами",
+        'sound_mode_enter': "Режим озвучивания активирован. Отправьте мне любой текст, и я преобразую его в речь. Напишите /exit для выхода.",
+        'sound_mode_exit': "Вы вышли из режима озвучивания.",
+        'sound_mode_error': "Ошибка генерации речи. Пожалуйста, попробуйте снова."
     },
     'de': {
         'welcome': "Willkommen beim Wikipedia Bot! Geben Sie ein beliebiges Wort oder Thema ein, um in Wikipedia zu suchen.",
@@ -73,7 +77,10 @@ language_texts = {
         'runic_error': "Bei der Generierung der Runenschrift ist ein Fehler aufgetreten.",
         'no_image': "Kein Bild für diesen Artikel verfügbar.",
         'listen_button': "Text anhören",
-        'runes_button': "In Runen anzeigen"
+        'runes_button': "In Runen anzeigen",
+        'sound_mode_enter': "Sprachmodus aktiviert. Senden Sie mir einen Text und ich werde ihn in Sprache umwandeln. Geben Sie /exit ein, um zu beenden.",
+        'sound_mode_exit': "Sprachmodus beendet.",
+        'sound_mode_error': "Fehler bei der Sprachgenerierung. Bitte versuchen Sie es erneut."
     },
     'fo': {
         'welcome': "Vælkomin til Wikipedia Bot! Skriva eitt orð ella evni fyri at leita í Wikipedia.",
@@ -91,7 +98,10 @@ language_texts = {
         'runic_error': "Ein feilur hendi meðan rún vórðu gjørdar.",
         'no_image': "Ongin mynd er tøk til hesa grein.",
         'listen_button': "Hoyra tekstin",
-        'runes_button': "Vís við rún"
+        'runes_button': "Vís við rún",
+        'sound_mode_enter': "Ljóðtilfar virknað. Send mær ein tekst, og eg gera hann til ljóð. Skriva /exit fyri at hætta.",
+        'sound_mode_exit': "Ljóðtilfar er hætt.",
+        'sound_mode_error': "Feilur við at gera ljóð. Royn aftur."
     },
     'non': {
         'welcome': "Velkomin til Wikipedia-bóta! Skrifaðu hvaða orð eða efni til að leita í Wikipedia.",
@@ -109,133 +119,77 @@ language_texts = {
         'runic_error': "Villa kom upp við að búa til rúnatexta.",
         'no_image': "Engin mynd fyrir þessa grein.",
         'listen_button': "Hlusta á texta",
-        'runes_button': "Sýna með rúnum"
+        'runes_button': "Sýna með rúnum",
+        'sound_mode_enter': "Hljóðhamur virkur. Sendu mér texta og ég breyti honum í hljóð. Skrifaðu /exit til að hætta.",
+        'sound_mode_exit': "Hætt í hljóðham.",
+        'sound_mode_error': "Villa við að búa til hljóð. Reyndu aftur."
     }
 }
 
 
-def get_wiki_page(search_term):
-    try:
-        wiki_lang = 'en' if current_language == 'non' else current_language
-        wikipedia.set_lang(wiki_lang)
-
-        page = wikipedia.page(search_term, auto_suggest=False)
-        return page
-    except Exception as e:
-        print(f"Error getting wiki page: {e}")
-        return None
-
-
-def get_wiki_content(page):
-    try:
-        content = page.content[:1500]
-        sentences = content.split('.')[:-1]
-
-        clean_text = '.'.join(
-            sentence.strip() + '.'
-            for sentence in sentences
-            if len(sentence.strip()) > 3 and not ('==' in sentence)
-        )
-
-        clean_text = re.sub(r'\([^()]*\)', '', clean_text)  # Remove parentheses
-        clean_text = re.sub(r'\{[^{}]*\}', '', clean_text)  # Remove curly braces
-        return clean_text if clean_text else language_texts[current_language].get('no_content',
-                                                                                  "No readable content found.")
-    except Exception as e:
-        print(f"Error processing content: {e}")
-        return language_texts[current_language].get('no_content', "No content available.")
-
-
-def get_wiki_image_url(page):
-    try:
-        if not hasattr(page, 'images') or not page.images:
-            return None
-
-        # Get the first image that's not a flag or icon
-        for img_url in page.images:
-            if img_url.lower().endswith(('.jpg', '.jpeg', '.png', '.gif')):
-                if 'flag' not in img_url.lower() and 'icon' not in img_url.lower():
-                    return img_url
-        return page.images[0] if page.images else None
-    except Exception as e:
-        print(f"Error getting image URL: {e}")
-        return None
-
-
-def download_image(image_url):
-    try:
-        response = requests.get(image_url, stream=True)
-        if response.status_code == 200:
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as f:
-                for chunk in response.iter_content(1024):
-                    f.write(chunk)
-                return f.name
-        return None
-    except Exception as e:
-        print(f"Error downloading image: {e}")
-        return None
+def get_language_keyboard():
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    btn1 = types.KeyboardButton('English')
+    btn2 = types.KeyboardButton('Русский')
+    btn3 = types.KeyboardButton('Deutsch')
+    btn4 = types.KeyboardButton('Føroyskt')
+    btn5 = types.KeyboardButton('Norrǿna')
+    markup.add(btn1, btn2, btn3, btn4, btn5)
+    return markup
 
 
 def getwiki(search_term):
     try:
-        page = get_wiki_page(search_term)
-        if not page:
-            return language_texts[current_language].get('no_content', "No Wikipedia page found for this term."), None
+        wikipedia.set_lang(current_language)
+        page = wikipedia.page(search_term)
+        summary = wikipedia.summary(search_term, sentences=3)
 
-        content = get_wiki_content(page)
-        image_url = get_wiki_image_url(page)
+        # Clean up the summary text
+        summary = re.sub(r'\([^)]*\)', '', summary)  # Remove text in parentheses
+        summary = re.sub(r'\[[^\]]*\]', '', summary)  # Remove text in brackets
+        summary = re.sub(r'\s+', ' ', summary).strip()  # Remove extra whitespace
 
-        return content, image_url
+        # Get image URL if available
+        image_url = None
+        if page.images:
+            for img in page.images:
+                if img.lower().endswith(('.jpg', '.jpeg', '.png')):
+                    image_url = img
+                    break
+
+        return f"{summary}\n\nRead more: {page.url}", image_url
     except wikipedia.exceptions.DisambiguationError as e:
-        return f"Multiple options found. Please be more specific. Options: {', '.join(e.options[:5])}...", None
+        options = "\n".join(e.options[:5])
+        return f"Multiple options found. Please be more specific:\n\n{options}", None
+    except wikipedia.exceptions.PageError:
+        return f"Sorry, no information found for '{search_term}' in {current_language} Wikipedia.", None
     except Exception as e:
-        return f"An error occurred: {str(e)}", None
-
-
-def to_runes(text):
-    rune_map = {
-        'a': 'ᛅ', 'á': 'ᛅ', 'b': 'ᛒ', 'c': 'ᛋ', 'd': 'ᛏ', 'ð': 'ᚦ', 'e': 'ᛁ',
-        'é': 'ᛁ', 'f': 'ᚠ', 'g': 'ᚴ', 'h': 'ᚼ', 'i': 'ᛁ', 'í': 'ᛁ', 'j': 'ᛁ',
-        'k': 'ᚴ', 'l': 'ᛚ', 'm': 'ᛘ', 'n': 'ᚾ', 'o': 'ᚢ', 'ó': 'ᚢ', 'ǫ': 'ᚢ',
-        'p': 'ᛒ', 'q': 'ᚴ', 'r': 'ᚱ', 's': 'ᛋ', 't': 'ᛏ', 'u': 'ᚢ', 'ú': 'ᚢ',
-        'v': 'ᚠ', 'w': 'ᚠ', 'x': 'ᛋ', 'y': 'ᚢ', 'ý': 'ᚢ', 'z': 'ᛋ', 'æ': 'ᛅ',
-        'ø': 'ᚢ', 'ö': 'ᚢ', 'þ': 'ᚦ', ' ': ' ', '.': '·', ',': '·', ':': '·',
-        '!': '·', '?': '·'
-    }
-
-    runic_text = []
-    for char in text.lower():
-        if char in rune_map:
-            runic_text.append(rune_map[char])
-        else:
-            runic_text.append(char)
-
-    return ''.join(runic_text)
+        print(f"Error in getwiki: {e}")
+        return "An error occurred while searching Wikipedia.", None
 
 
 def text_to_speech(text, lang):
     try:
-        tts_lang = 'is' if lang == 'non' else lang
-
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as fp:
-            temp_path = fp.name
-
-        tts = gTTS(text=text[:5000], lang=tts_lang)
-        tts.save(temp_path)
-        return temp_path
+        with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as fp:
+            tts = gTTS(text=text, lang=lang)
+            tts.save(fp.name)
+            return fp.name
     except Exception as e:
-        print(f"Error in TTS: {e}")
+        print(f"Error in text_to_speech: {e}")
         return None
 
 
-def get_language_keyboard():
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.add(types.KeyboardButton("English"))
-    markup.add(types.KeyboardButton("Русский"))
-    markup.add(types.KeyboardButton("Deutsch"))
-    markup.add(types.KeyboardButton("Føroyskt"))
-    markup.add(types.KeyboardButton("Norrǿna"))
-    return markup
+def download_image(url):
+    try:
+        response = requests.get(url, stream=True)
+        if response.status_code == 200:
+            with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as fp:
+                for chunk in response.iter_content(1024):
+                    fp.write(chunk)
+                return fp.name
+    except Exception as e:
+        print(f"Error downloading image: {e}")
+    return None
 
 
 @bot.message_handler(commands=["start"])
@@ -244,15 +198,6 @@ def start(message):
                      language_texts[current_language]['welcome'],
                      reply_markup=get_language_keyboard())
 
-
-@bot.message_handler(commands=["language"])
-def change_language(message):
-    bot.send_message(message.chat.id, 'Please choose your language:',
-                     reply_markup=get_language_keyboard())
-
-@bot.message_handler(commands=["commands"])
-def say_commands(message):
-    bot.send_message(message.chat.id, '/help, /info,/text, /EvenTeam')
 
 @bot.message_handler(commands=["help"])
 def help(message):
@@ -263,23 +208,67 @@ def help(message):
 
 @bot.message_handler(commands=["info"])
 def info(message):
-    example_runes = to_runes("example in old norse")
+    runes_example = "ᚺᛖᛚᛚᛟ ᚹᛟᚱᛚᛞ"  # Example runic text
+    text = language_texts[current_language]['info'].format(runes_example=runes_example)
     bot.send_message(message.chat.id,
-                     language_texts[current_language]['info'].format(runes_example=example_runes),
+                     text,
                      reply_markup=get_language_keyboard())
 
 
-@bot.message_handler(commands=["EvenTeam"])
+@bot.message_handler(commands=["even_team"])
 def even_team(message):
     bot.send_message(message.chat.id,
                      language_texts[current_language]['even_team'],
                      reply_markup=get_language_keyboard())
 
 
+@bot.message_handler(commands=["language"])
+def language(message):
+    bot.send_message(message.chat.id,
+                     "Choose language:",
+                     reply_markup=get_language_keyboard())
+
+
+@bot.message_handler(commands=["sound"])
+def enter_sound_mode(message):
+    user_id = message.from_user.id
+    sound_mode[user_id] = True
+    bot.send_message(message.chat.id,
+                     language_texts[current_language]['sound_mode_enter'],
+                     reply_markup=get_language_keyboard())
+
+
+@bot.message_handler(commands=["exit"])
+def exit_sound_mode(message):
+    user_id = message.from_user.id
+    if user_id in sound_mode:
+        del sound_mode[user_id]
+    bot.send_message(message.chat.id,
+                     language_texts[current_language]['sound_mode_exit'],
+                     reply_markup=get_language_keyboard())
+
+
 @bot.message_handler(content_types=["text"])
 def handle_text(message):
     global current_language, search_results
+    user_id = message.from_user.id
     text = message.text.strip()
+
+    # Проверка на режим sound
+    if user_id in sound_mode:
+        bot.send_chat_action(message.chat.id, 'record_audio')
+        audio_path = text_to_speech(text, current_language)
+
+        if audio_path:
+            with open(audio_path, 'rb') as audio:
+                bot.send_voice(message.chat.id, audio,
+                               reply_markup=get_language_keyboard())
+            os.unlink(audio_path)
+        else:
+            bot.send_message(message.chat.id,
+                             language_texts[current_language]['sound_mode_error'],
+                             reply_markup=get_language_keyboard())
+        return
 
     lang_map = {
         'Русский': 'ru',
@@ -301,7 +290,6 @@ def handle_text(message):
         search_id = hashlib.md5(result.encode()).hexdigest()[:10]
         search_results[search_id] = {'text': result, 'image_url': image_url}
 
-
         if image_url:
             try:
                 image_path = download_image(image_url)
@@ -315,10 +303,8 @@ def handle_text(message):
                 print(f"Error sending image: {e}")
                 bot.send_message(message.chat.id, language_texts[current_language]['no_image'])
 
-
         bot.send_message(message.chat.id, result,
                          reply_markup=get_language_keyboard())
-
 
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton(
@@ -336,58 +322,43 @@ def handle_text(message):
                          reply_markup=markup)
 
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith('speak:'))
-def speak_callback(call):
+@bot.callback_query_handler(func=lambda call: True)
+def callback_inline(call):
     try:
-        search_id = call.data[6:]
-        if search_id not in search_results:
-            bot.answer_callback_query(call.id, language_texts[current_language]['no_content'])
-            return
+        if call.data.startswith("speak:"):
+            search_id = call.data.split(":")[1]
+            if search_id in search_results:
+                text = search_results[search_id]['text']
+                audio_path = text_to_speech(text, current_language)
+                if audio_path:
+                    with open(audio_path, 'rb') as audio:
+                        bot.send_voice(call.message.chat.id, audio)
+                    os.unlink(audio_path)
+                else:
+                    bot.send_message(call.message.chat.id,
+                                     language_texts[current_language]['audio_error'])
+            else:
+                bot.send_message(call.message.chat.id,
+                                 language_texts[current_language]['no_content'])
 
-        text_to_speak = search_results[search_id]['text']
-        tts_lang_map = {
-            'en': 'en',
-            'ru': 'ru',
-            'de': 'de',
-            'fo': 'da',
-            'non': 'is'
-        }
-
-        tts_lang = tts_lang_map.get(current_language, 'en')
-        bot.send_chat_action(call.message.chat.id, 'record_audio')
-        audio_path = text_to_speech(text_to_speak, tts_lang)
-
-        if audio_path:
-            with open(audio_path, 'rb') as audio:
-                bot.send_voice(call.message.chat.id, audio,
-                               reply_markup=get_language_keyboard())
-            os.unlink(audio_path)
-        else:
-            bot.answer_callback_query(call.id, language_texts[current_language]['audio_error'])
-
+        elif call.data.startswith("runes:"):
+            search_id = call.data.split(":")[1]
+            if search_id in search_results:
+                text = search_results[search_id]['text']
+                # Simple runic conversion (just for demonstration)
+                runic_text = text.replace('a', 'ᚨ').replace('b', 'ᛒ').replace('c', 'ᚲ').replace('d', 'ᛞ')
+                bot.send_message(call.message.chat.id,
+                                 f"Runic text:\n\n{runic_text}")
+            else:
+                bot.send_message(call.message.chat.id,
+                                 language_texts[current_language]['no_content'])
     except Exception as e:
         print(f"Error in callback: {e}")
-        bot.answer_callback_query(call.id, language_texts[current_language]['general_error'])
-
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith('runes:'))
-def runes_callback(call):
-    try:
-        search_id = call.data[6:]
-        if search_id not in search_results:
-            bot.answer_callback_query(call.id, language_texts[current_language]['no_content'])
-            return
-
-        original_text = search_results[search_id]['text']
-        runic_text = to_runes(original_text)
-        runic_text = runic_text[:4000] + "..." if len(runic_text) > 4000 else runic_text
-
-        bot.send_message(call.message.chat.id, f"Runic version:\n\n{runic_text}")
-        bot.answer_callback_query(call.id)
-
-    except Exception as e:
-        print(f"Error in runes callback: {e}")
-        bot.answer_callback_query(call.id, language_texts[current_language]['runic_error'])
+        bot.send_message(call.message.chat.id,
+                         language_texts[current_language]['general_error'])
+@bot.message_handler(commands=["Yarik"])
+def handle_text(message):
+    bot.send_message(message.chat.id, "Ярик лох")
 
 
 if __name__ == '__main__':
