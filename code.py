@@ -9,7 +9,7 @@ from aiogram.enums import ParseMode
 from aiogram.types import Message
 
 # Настройки
-TELEGRAM_TOKEN = "7967328415:AAHOjXfv8Oa8ChCTRTuJJ-gBUASpV5EfZHA"
+TELEGRAM_TOKEN = ""
 OPENAI_API_KEY = "your-openai-api-key"  # Замените на реальный ключ
 MAX_HISTORY = 10  # Максимальное количество сообщений для контекста
 
